@@ -3,15 +3,43 @@
 #include <tables.h>
 
 struct JoystickDTO {
-  int JoyAngle;
+  float JoyAngle;
   float JoyForce;
 
   JoystickDTO(int pinX, int pinY) {
     float nX = analogRead(pinX) - 512;
     float nY = analogRead(pinY) - 512;
-  
-    JoyAngle = (atan2(nX, nY)+PI) * 180/PI;
-    JoyForce = sqrt((nX*nX) + (nY*nY));
+
+    /*
+    Serial.print(nX);
+    Serial.print("\t"); // a space ' ' or  tab '\t' character is printed between the two values.
+    Serial.print(nY);
+    Serial.print("\t");
+    */
+    
+    JoyAngle = (atan2(nX, nY)+PI) * (180.0/PI);
+    JoyForce = min(sqrt((nX*nX) + (nY*nY)), 512);
+  }
+
+  // The direction the joystick point at divided to 8 segments
+  int getSegment() {
+    if (JoyAngle < 22.5 || JoyAngle > 337.5) {
+      return 0;
+    }
+
+    return (JoyAngle+22.5)/45;
+  }
+
+  bool isTilted() {
+    return JoyForce > 50;
+  }
+
+  int getTransposedNote(int transposition) {
+    if (!isTilted()){
+      return -1;
+    }
+    
+    return 60 + getSegment() + transposition;
   }
 };
 
@@ -19,10 +47,12 @@ class ToneGenerator {
 public:
   MusicWithoutDelay Buzzer;
   float Volume;
+
+  void update() {
+    Buzzer.setVolume(Volume);
+    Buzzer.update();
+  }
 };
-
-
-const int Notes[] = {NOTE_C4, NOTE_D4, NOTE_E4, NOTE_F4, NOTE_G4, NOTE_A4, NOTE_B4, NOTE_C5};
 
 ToneGenerator toneGenerators[3];
 
@@ -37,31 +67,29 @@ void setup() {
 }
 
 void loop() {
-  JoystickDTO joysticks[] = {{A0, A1}, {A2, A3}, {A4, A5}};
-  
-  for(int i = 0; i < (sizeof(toneGenerators)/sizeof(*toneGenerators)); i++){
-    updateTone(toneGenerators[i], joysticks[i]);
-  }
+  JoystickDTO joysticks[] = {{A0, A1}, {A2, A3}, {A4, A5}, {A6, A7}};
+  //Serial.println(0);
+
+  int notes[] = { joysticks[0].getTransposedNote(0),
+                  joysticks[1].getTransposedNote(4),
+                  joysticks[2].getTransposedNote(7)};
+  strum(notes, joysticks[3]);
 }
 
-void updateTone(ToneGenerator toneGenerator, JoystickDTO joystick){
-  int noteId = (joystick.JoyAngle+22)/45;
-  if (joystick.JoyAngle < 22 || joystick.JoyAngle > 337) {
-    noteId = 0;
-  }
 
-  int note = Notes[noteId];
-  double mappedFrequency = toneGenerator.Buzzer.getNoteAsFrequency(note);
-
-  if (joystick.JoyForce > 50) {
-    toneGenerator.Volume = max(toneGenerator.Volume, min(127, map(joystick.JoyForce, 50,512,0,127)));
-    toneGenerator.Buzzer.setFrequency(mappedFrequency); 
-  }
-
-  if (toneGenerator.Volume > 0) {
-    --toneGenerator.Volume;
-  }
+void strum(int notes[], JoystickDTO strumJoystick){
+  bool isTilted = strumJoystick.isTilted();
   
-  toneGenerator.Buzzer.setVolume(toneGenerator.Volume);
-  toneGenerator.Buzzer.update();
+  for(int i = 0; i < 3; i++){
+    if (isTilted && notes[i] > 0) {
+      double mappedFrequency = toneGenerators[i].Buzzer.getNoteAsFrequency(notes[i] + strumJoystick.getSegment());
+      toneGenerators[i].Volume = max(toneGenerators[i].Volume, min(127, map(strumJoystick.JoyForce, 50,512,0,127)));
+      toneGenerators[i].Buzzer.setFrequency(mappedFrequency);
+    }
+    else if (toneGenerators[i].Volume > 0){
+      --toneGenerators[i].Volume;
+    }
+    
+    toneGenerators[i].update();
+  }
 }
